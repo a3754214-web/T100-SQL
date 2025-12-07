@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>T100 SQL Expert (V15 Join Fix)</title>
+    <title>T100 SQL Expert (V17 Smart Where)</title>
     <style>
         :root { --primary: #2563eb; --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0; --text: #0f172a; --code-bg: #1e1e1e; --code-text: #e2e8f0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 20px; height: 100vh; box-sizing: border-box; display: flex; gap: 20px; }
+        
+        /* Layout */
         .main-panel { flex: 7; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
         .history-panel { flex: 3; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; height: 100%; }
         .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
@@ -65,6 +67,8 @@
         .status-bar { font-size: 0.8em; color: #64748b; margin-right: 10px; display: flex; align-items: center; gap: 5px;}
         .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; display: inline-block; }
         .status-dot.online { background: #22c55e; }
+        .status-dot.loading { background: #f59e0b; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
@@ -72,7 +76,7 @@
     <div class="main-panel">
         <div class="card">
             <h2>
-                T100 SQL Expert (V15)
+                T100 SQL Expert (V17)
                 <div style="display: flex; align-items: center;">
                     <span id="syncStatus" class="status-bar"><span class="status-dot"></span> 尚未同步</span>
                     <button class="btn-action btn-sm" onclick="openSettings()">☁️ 雲端設定</button>
@@ -112,7 +116,7 @@
                 <div class="col">
                     <label>智能篩選 (Where)</label>
                     <div class="input-group">
-                        <textarea id="smartWhere" placeholder="例如：&#10;xrcaent 5&#10;xrcadocno 2024001"></textarea>
+                        <textarea id="smartWhere" placeholder="例如：&#10;xrcaent = 5&#10;xrcadocno = 2024001 2024002 (自動轉 IN)"></textarea>
                         <button class="icon-btn" onclick="openDictModal('smartWhere')" title="開窗選取">📖</button>
                     </div>
                 </div>
@@ -228,7 +232,7 @@
         let dictionary = {}; let tableMeta = {}; let tempSelectedFields = []; 
         let activeInputId = ''; let currentViewingTable = '';
 
-        const KEYS = { SQL:'t100_v15_sql', FIELDS:'t100_v15_input', DICT:'t100_v15_dict', META:'t100_v15_meta', URL:'t100_v15_url' };
+        const KEYS = { SQL:'t100_v17_sql', FIELDS:'t100_v17_input', DICT:'t100_v17_dict', META:'t100_v17_meta', URL:'t100_v17_url' };
 
         window.onload = function() {
             renderHistory();
@@ -237,6 +241,7 @@
             if(savedUrl) {
                 document.getElementById('csvUrlInput').value = savedUrl;
                 loadLocalDict(); 
+                if(Object.keys(dictionary).length === 0) syncFromCloud();
             }
             updateSyncStatus();
         };
@@ -247,10 +252,12 @@
         async function syncFromCloud() {
             const url = document.getElementById('csvUrlInput').value.trim();
             const msg = document.getElementById('syncMsg');
+            const statusEl = document.getElementById('syncStatus');
             if(!url) { alert('請輸入 CSV 連結'); return; }
             
             msg.textContent = '連線中... (使用 CORS 代理)';
             msg.style.color = 'blue';
+            statusEl.innerHTML = `<span class="status-dot loading"></span> 同步中...`;
             
             const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
             
@@ -258,9 +265,7 @@
                 const response = await fetch(proxyUrl);
                 if(!response.ok) throw new Error(`HTTP Error: ${response.status}`);
                 const text = await response.text();
-                
                 if(!text || text.length < 10) throw new Error('檔案內容為空或錯誤');
-                
                 const result = parseAndSaveCSV(text);
                 if(result === 0) throw new Error('無法解析資料，請確認 CSV 格式');
 
@@ -268,11 +273,14 @@
                 msg.textContent = `同步成功！已載入 ${result} 張表格。`;
                 msg.style.color = 'green';
                 updateSyncStatus();
-                setTimeout(() => document.getElementById('settingsModal').style.display='none', 1500);
+                if(document.getElementById('settingsModal').style.display === 'flex') {
+                    setTimeout(() => document.getElementById('settingsModal').style.display='none', 1500);
+                }
             } catch (e) {
                 console.error(e);
                 msg.textContent = '失敗：' + e.message;
                 msg.style.color = 'red';
+                statusEl.innerHTML = `<span class="status-dot" style="background:red"></span> 同步失敗`;
             }
         }
 
@@ -287,8 +295,6 @@
                 if(parts.length < 3) return; 
 
                 let tId, tName, fId, fName;
-
-                // Simple detection logic
                 if(parts.length >= 4 && isTableID(parts[0]) && isFieldID(parts[2])) {
                     tId = parts[0]; tName = parts[1]; fId = parts[2]; fName = parts[3];
                 } else if (parts.length >= 3 && isTableID(parts[0]) && isFieldID(parts[1])) {
@@ -324,19 +330,13 @@
         function updateSyncStatus() {
             const count = Object.keys(dictionary).length;
             const status = document.getElementById('syncStatus');
-            const dot = status.querySelector('.status-dot');
-            if(count > 0) {
-                dot.classList.add('online');
-                status.innerHTML = `<span class="status-dot online"></span> 資料庫已就緒 (${count} 表)`;
-            } else {
-                dot.classList.remove('online');
-                status.innerHTML = `<span class="status-dot"></span> 無資料庫`;
-            }
+            if(count > 0) status.innerHTML = `<span class="status-dot online"></span> 資料庫已就緒 (${count} 表)`;
+            else status.innerHTML = `<span class="status-dot"></span> 無資料庫 (請同步)`;
         }
 
         // --- PICKER UI ---
         function openDictModal(target) {
-            if(Object.keys(dictionary).length === 0) { alert('請先設定雲端資料庫'); openSettings(); return; }
+            if(Object.keys(dictionary).length === 0) { alert('資料庫是空的，正在嘗試同步...'); syncFromCloud(); return; }
             activeInputId = target;
             document.getElementById('dictModal').style.display = 'flex';
             renderTableList();
@@ -399,13 +399,21 @@
             document.querySelectorAll('.field-checkbox').forEach(chk => chk.checked = tempSelectedFields.includes(chk.value));
         }
         function updateSelectedCount() { document.getElementById('selectedCount').textContent = tempSelectedFields.length; }
+        
         function confirmDictSelection() {
             const input = document.getElementById(activeInputId);
             const val = input.value.trim();
             let txt = '';
-            if(activeInputId === 'joinCond') txt = tempSelectedFields.length === 2 ? `${tempSelectedFields[0]} = ${tempSelectedFields[1]}` : tempSelectedFields.join(' ');
-            else if(activeInputId === 'smartWhere') txt = tempSelectedFields.join('\n');
-            else txt = tempSelectedFields.join(', ');
+            
+            // V17 Logic: Smart Format Injection
+            if(activeInputId === 'joinCond') {
+                txt = tempSelectedFields.length === 2 ? `${tempSelectedFields[0]} = ${tempSelectedFields[1]}` : tempSelectedFields.join(' ');
+            } else if(activeInputId === 'smartWhere') {
+                // V17 Logic: Auto Append ' = '
+                txt = tempSelectedFields.map(f => `${f} = `).join('\n');
+            } else {
+                txt = tempSelectedFields.join(', ');
+            }
             
             if(activeInputId === 'smartWhere') input.value = val ? val + '\n' + txt : txt;
             else if(activeInputId === 'joinCond') input.value = val ? val + ' AND ' + txt : txt;
@@ -413,17 +421,30 @@
             closeDictModal();
         }
 
-        // --- SQL LOGIC (FIXED in V15) ---
+        // --- SQL LOGIC (V17 Smart Where) ---
         function parseWhere(txt) {
             if(!txt.trim()) return {sql:'', f:[]};
             const conds = []; const f = [];
             txt.split('\n').forEach(l => {
                 if(!l.trim()) return;
-                const p = l.trim().split(/\s+/);
-                f.push(p[0]);
-                if(p.length===1) conds.push(`${p[0]} = '?'`);
-                else if(p.length===2) conds.push(`${p[0]} = '${p[1]}'`);
-                else conds.push(`${p[0]} IN (${p.slice(1).map(v=>`'${v}'`).join(', ')})`);
+                // V17 Logic: Allow optional '=' sign
+                // Regex splits by spaces, but treats '=' as a separator to ignore
+                const tokens = l.trim().split(/\s+/).filter(t => t !== '=');
+                
+                if(tokens.length === 0) return;
+                
+                const field = tokens[0];
+                const values = tokens.slice(1);
+                f.push(field);
+
+                if(values.length === 0) {
+                    conds.push(`${field} = '?'`); // No value entered yet
+                } else if(values.length === 1) {
+                    conds.push(`${field} = '${values[0]}'`);
+                } else {
+                    const inList = values.map(v => `'${v}'`).join(', ');
+                    conds.push(`${field} IN (${inList})`);
+                }
             });
             return {sql: conds.length ? '\nWHERE ' + conds.join('\n  AND ') : '', f};
         }
@@ -441,8 +462,6 @@
 
             const sFields = fieldsStr.replace(/[\n\s]+/g, ',').split(',').map(s=>s.trim()).filter(s=>s);
             const wRes = parseWhere(whereRaw);
-            
-            // V15 FIX: Also scan join conditions for table prefixes
             const joinFields = join.split(/[^a-zA-Z0-9_]+/).filter(x => x.length > prefix);
             
             const allFields = [...sFields, ...wRes.f, ...joinFields];
@@ -550,5 +569,4 @@
         function copyToClipboard() { navigator.clipboard.writeText(document.getElementById('output').textContent).then(()=>alert('已複製')); }
     </script>
 </body>
-
 </html>
