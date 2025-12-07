@@ -221,7 +221,7 @@
 
     <script>
         // --- CONFIG ---
-        const DEFAULT_CSV_URL = ''; 
+        const DEFAULT_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ93t0GYEBciTbZw4qQNBVa8mm7HMd45KDSYPMBcb-DSLh7HOeZ-2q14coaavPX4w8VEqgwcoQY59kB/pub?output=csv'; 
 
         // --- STATE ---
         let currentData = { mainTable:'', fields:[], joinTables:[], originalJoinCond:'', originalOrderBy:'', parsedWhereClause:'' };
@@ -550,4 +550,5 @@
         function copyToClipboard() { navigator.clipboard.writeText(document.getElementById('output').textContent).then(()=>alert('已複製')); }
     </script>
 </body>
+
 </html>
