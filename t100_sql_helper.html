@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T100 SQL Expert (V15 Join Fix)</title>
+    <style>
+        :root { --primary: #2563eb; --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0; --text: #0f172a; --code-bg: #1e1e1e; --code-text: #e2e8f0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding: 20px; height: 100vh; box-sizing: border-box; display: flex; gap: 20px; }
+        .main-panel { flex: 7; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
+        .history-panel { flex: 3; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; height: 100%; }
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        h2 { margin-top: 0; margin-bottom: 15px; color: #334155; font-size: 1.25rem; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+        label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.85em; color: #475569; }
+        input, textarea { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-family: 'Consolas', monospace; font-size: 14px; box-sizing: border-box; transition: all 0.2s; }
+        textarea { resize: vertical; min-height: 80px; }
+        input:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+        .row { display: flex; gap: 15px; margin-bottom: 15px; }
+        .col { flex: 1; }
+        .input-group { display: flex; gap: 5px; align-items: flex-start; }
+        .input-group input, .input-group textarea { flex: 1; }
+        .icon-btn { padding: 0 15px; background: #e0f2fe; border: 1px solid #bae6fd; color: #0284c7; border-radius: 6px; cursor: pointer; font-size: 1.2em; display: flex; align-items: center; justify-content: center; height: 38px; }
+        .icon-btn:hover { background: #bae6fd; }
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9em; transition: all 0.15s; display: inline-flex; align-items: center; justify-content: center; }
+        button:hover { transform: translateY(-1px); filter: brightness(105%); }
+        .btn-primary { background-color: var(--primary); color: white; }
+        .btn-secondary { background-color: #64748b; color: white; }
+        .btn-danger { background-color: #ef4444; color: white; }
+        .btn-action { background-color: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+        .btn-action:hover { background-color: #e2e8f0; border-color: #94a3b8; }
+        .btn-sm { padding: 4px 8px; font-size: 0.8em; }
+        #output { background: var(--code-bg); color: var(--code-text); padding: 20px; border-radius: 8px; font-family: 'Consolas', 'Monaco', monospace; white-space: pre; overflow-x: auto; font-size: 14px; line-height: 1.6; min-height: 150px; border: 1px solid #333; }
+        
+        /* Modal & Dict UI */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 1000; align-items: center; justify-content: center; }
+        .modal-box { background: white; padding: 20px; border-radius: 12px; width: 900px; max-width: 95%; height: 85vh; box-shadow: 0 10px 25px rgba(0,0,0,0.2); display: flex; flex-direction: column; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .modal-title { font-size: 1.2em; font-weight: 700; color: #334155; }
+        .modal-body { flex: 1; overflow: hidden; display: flex; gap: 15px; flex-direction: column; }
+        .modal-footer { margin-top: 15px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #eee; padding-top: 10px; }
+        .dict-container { display: flex; height: 100%; gap: 15px; }
+        .dict-sidebar { width: 280px; border-right: 1px solid #eee; overflow-y: auto; padding-right: 10px; flex-shrink: 0; }
+        .dict-main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+        .table-item { padding: 8px; cursor: pointer; border-radius: 4px; margin-bottom: 2px; font-size: 0.9em; display: flex; flex-direction: column; }
+        .table-item:hover { background: #f1f5f9; }
+        .table-item.active { background: #e0f2fe; color: #0284c7; }
+        .table-item-code { font-weight: bold; }
+        .table-item-name { font-size: 0.85em; color: #64748b; margin-top: 2px; }
+        .field-list { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+        .field-list th { text-align: left; background: #f8fafc; padding: 8px; border-bottom: 2px solid #e2e8f0; position: sticky; top: 0; z-index: 5; }
+        .field-list td { padding: 8px; border-bottom: 1px solid #f1f5f9; }
+        .field-list tr:hover { background: #f8fafc; }
+        .field-checkbox { transform: scale(1.2); cursor: pointer; }
+        .field-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 8px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; margin-bottom: 0; }
+        
+        /* History */
+        #historyList { overflow-y: auto; flex: 1; margin-top: 10px; }
+        .history-item { padding: 12px; border-bottom: 1px solid var(--border); cursor: pointer; border-radius: 4px; }
+        .history-item:hover { background-color: #f1f5f9; }
+        .history-header { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .history-name { font-weight: bold; font-size: 0.9em; }
+        .history-preview { font-size: 0.8em; color: #64748b; }
+        .delete-btn { color: #ef4444; margin-left: 8px; cursor: pointer; }
+        .status-bar { font-size: 0.8em; color: #64748b; margin-right: 10px; display: flex; align-items: center; gap: 5px;}
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; display: inline-block; }
+        .status-dot.online { background: #22c55e; }
+    </style>
+</head>
+<body>
+
+    <div class="main-panel">
+        <div class="card">
+            <h2>
+                T100 SQL Expert (V15)
+                <div style="display: flex; align-items: center;">
+                    <span id="syncStatus" class="status-bar"><span class="status-dot"></span> 尚未同步</span>
+                    <button class="btn-action btn-sm" onclick="openSettings()">☁️ 雲端設定</button>
+                </div>
+            </h2>
+            
+            <div class="row">
+                <div class="col" style="flex: 3;">
+                    <label>查詢欄位 (Select Fields)</label>
+                    <div class="input-group">
+                        <input type="text" id="fields" list="field_history" placeholder="xrcadocno, xrce104..." autocomplete="off">
+                        <button class="icon-btn" onclick="openDictModal('fields')" title="開窗選取">📖</button>
+                    </div>
+                    <datalist id="field_history"></datalist>
+                </div>
+                <div class="col" style="flex: 1;">
+                    <label>前綴長度</label>
+                    <input type="number" id="prefixLen" value="4" min="3" max="10">
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col">
+                    <label>Join 條件 (ON ...)</label>
+                    <div class="input-group">
+                        <input type="text" id="joinCond" placeholder="e.g. xrcadocno = xrcedocno">
+                        <button class="icon-btn" onclick="openDictModal('joinCond')" title="開窗選取">📖</button>
+                    </div>
+                </div>
+                <div class="col">
+                    <label>排序 (Order By)</label>
+                    <input type="text" id="orderBy" placeholder="xrcadocno DESC">
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col">
+                    <label>智能篩選 (Where)</label>
+                    <div class="input-group">
+                        <textarea id="smartWhere" placeholder="例如：&#10;xrcaent 5&#10;xrcadocno 2024001"></textarea>
+                        <button class="icon-btn" onclick="openDictModal('smartWhere')" title="開窗選取">📖</button>
+                    </div>
+                </div>
+            </div>
+
+             <div class="row">
+                 <div class="col">
+                    <label>紀錄名稱</label>
+                    <input type="text" id="recordName" placeholder="例如：AP異常檢查">
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn-primary" onclick="generateSQL('SELECT')">🚀 生成 SQL</button>
+                <button class="btn-secondary" onclick="clearInputs()">🧹 清空</button>
+            </div>
+        </div>
+
+        <div class="card" style="flex: 1;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3>輸出結果</h3>
+                <button class="btn-action" onclick="copyToClipboard()">📋 複製</button>
+            </div>
+            <div class="btn-group" style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
+                <button class="btn-action" onclick="transformSQL('DISTINCT')">🔍 唯一值</button>
+                <button class="btn-action" onclick="transformSQL('SUM')">∑ 加總</button>
+                <button class="btn-action" onclick="transformSQL('UPDATE')">✏️ Update</button>
+                <button class="btn-danger" onclick="transformSQL('DELETE')">🗑️ Delete</button>
+            </div>
+            <div id="output">-- 請輸入欄位並點擊生成</div>
+        </div>
+    </div>
+
+    <div class="history-panel">
+        <div style="display: flex; justify-content: space-between; margin-bottom:10px;">
+            <h3>歷史紀錄</h3>
+            <span style="cursor:pointer;color:#64748b;font-size:0.8em" onclick="clearHistory()">清空</span>
+        </div>
+        <div id="historyList"></div>
+    </div>
+
+    <div id="dictModal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header">
+                <div class="modal-title">欄位選取器</div>
+                <input type="text" id="tableSearch" placeholder="搜尋表格 (如 xrca 或 應收)..." style="width: 250px; padding: 5px;" onkeyup="filterTables()">
+            </div>
+            <div class="modal-body">
+                <div class="dict-container">
+                    <div class="dict-sidebar" id="tableList"></div>
+                    <div class="dict-main">
+                        <div class="field-toolbar">
+                            <span id="currentTableName" style="font-weight:bold;color:#2563eb">請選擇表格</span>
+                            <div>
+                                <button class="btn-sm btn-action" onclick="selectAllFields()">✅ 全選</button>
+                                <button class="btn-sm btn-action" onclick="deselectAllFields()">❎ 全不選</button>
+                            </div>
+                        </div>
+                        <div style="flex:1;overflow-y:auto">
+                            <table class="field-list">
+                                <thead><tr><th width="30">選</th><th>代號</th><th>名稱</th></tr></thead>
+                                <tbody id="fieldListBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div style="margin-right:auto;color:#666">已選: <span id="selectedCount">0</span></div>
+                <button class="btn-secondary" onclick="closeDictModal()">取消</button>
+                <button class="btn-primary" onclick="confirmDictSelection()">確認</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="modal-overlay">
+        <div class="modal-box" style="height:auto;width:600px">
+            <div class="modal-header">
+                <div class="modal-title">雲端資料庫設定 (Google Sheets)</div>
+                <button class="delete-btn" onclick="document.getElementById('settingsModal').style.display='none'">×</button>
+            </div>
+            <div class="modal-body" style="gap:10px">
+                <p style="font-size:0.9em;color:#666;line-height:1.5">
+                    1. 將您的 Google Sheet 整理好 (建議格式: 表格編號, 表格名稱, 欄位編號, 欄位名稱)<br>
+                    2. 點擊「檔案」>「共用」>「發布到網路」> 選擇「CSV」格式 > 複製連結。<br>
+                    3. 將連結貼在下方，系統會透過代理伺服器 (Proxy) 解決連線問題。
+                </p>
+                <label>CSV 連結 (Google Sheet Published URL)</label>
+                <input type="text" id="csvUrlInput" placeholder="https://docs.google.com/spreadsheets/...">
+                <button class="btn-primary" onclick="syncFromCloud()">🔄 立即同步資料</button>
+                <p id="syncMsg" style="font-size:0.8em;margin-top:5px;min-height:20px;"></p>
+            </div>
+        </div>
+    </div>
+
+    <div id="sumModal" class="modal-overlay">
+        <div class="modal-box" style="height:auto;width:400px">
+            <div class="modal-title">選擇加總欄位</div>
+            <div id="sumList" style="max-height:300px;overflow-y:auto;padding:10px;border:1px solid #eee"></div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="document.getElementById('sumModal').style.display='none'">取消</button>
+                <button class="btn-primary" onclick="confirmSum()">確認</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIG ---
+        const DEFAULT_CSV_URL = ''; 
+
+        // --- STATE ---
+        let currentData = { mainTable:'', fields:[], joinTables:[], originalJoinCond:'', originalOrderBy:'', parsedWhereClause:'' };
+        let dictionary = {}; let tableMeta = {}; let tempSelectedFields = []; 
+        let activeInputId = ''; let currentViewingTable = '';
+
+        const KEYS = { SQL:'t100_v15_sql', FIELDS:'t100_v15_input', DICT:'t100_v15_dict', META:'t100_v15_meta', URL:'t100_v15_url' };
+
+        window.onload = function() {
+            renderHistory();
+            renderFieldSuggestions();
+            const savedUrl = localStorage.getItem(KEYS.URL) || DEFAULT_CSV_URL;
+            if(savedUrl) {
+                document.getElementById('csvUrlInput').value = savedUrl;
+                loadLocalDict(); 
+            }
+            updateSyncStatus();
+        };
+
+        // --- CLOUD SYNC ---
+        function openSettings() { document.getElementById('settingsModal').style.display = 'flex'; }
+        
+        async function syncFromCloud() {
+            const url = document.getElementById('csvUrlInput').value.trim();
+            const msg = document.getElementById('syncMsg');
+            if(!url) { alert('請輸入 CSV 連結'); return; }
+            
+            msg.textContent = '連線中... (使用 CORS 代理)';
+            msg.style.color = 'blue';
+            
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+            
+            try {
+                const response = await fetch(proxyUrl);
+                if(!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                const text = await response.text();
+                
+                if(!text || text.length < 10) throw new Error('檔案內容為空或錯誤');
+                
+                const result = parseAndSaveCSV(text);
+                if(result === 0) throw new Error('無法解析資料，請確認 CSV 格式');
+
+                localStorage.setItem(KEYS.URL, url);
+                msg.textContent = `同步成功！已載入 ${result} 張表格。`;
+                msg.style.color = 'green';
+                updateSyncStatus();
+                setTimeout(() => document.getElementById('settingsModal').style.display='none', 1500);
+            } catch (e) {
+                console.error(e);
+                msg.textContent = '失敗：' + e.message;
+                msg.style.color = 'red';
+            }
+        }
+
+        function parseAndSaveCSV(text) {
+            const lines = text.split(/\r?\n/);
+            const newDict = {}; const newMeta = {};
+            let tableCount = 0;
+            
+            lines.forEach(line => {
+                if(!line.trim()) return;
+                const parts = line.split(',').map(p => p.replace(/^"|"$/g, '').trim());
+                if(parts.length < 3) return; 
+
+                let tId, tName, fId, fName;
+
+                // Simple detection logic
+                if(parts.length >= 4 && isTableID(parts[0]) && isFieldID(parts[2])) {
+                    tId = parts[0]; tName = parts[1]; fId = parts[2]; fName = parts[3];
+                } else if (parts.length >= 3 && isTableID(parts[0]) && isFieldID(parts[1])) {
+                    tId = parts[0]; tName = ''; fId = parts[1]; fName = parts[2];
+                }
+
+                if(tId && fId) {
+                    if(!newDict[tId]) { newDict[tId] = []; tableCount++; }
+                    newDict[tId].push({ id: fId, name: fName });
+                    if(tName && tName !== tId) newMeta[tId] = tName;
+                }
+            });
+
+            if(tableCount > 0) {
+                dictionary = newDict; tableMeta = newMeta;
+                localStorage.setItem(KEYS.DICT, JSON.stringify(dictionary));
+                localStorage.setItem(KEYS.META, JSON.stringify(tableMeta));
+            }
+            return tableCount;
+        }
+
+        function isTableID(str) { return str && (str.endsWith('_t') || (str.length >= 4 && str.length <= 6 && /^[a-zA-Z0-9_]+$/.test(str))); }
+        function isFieldID(str) { return str && str.length > 3 && /^[a-zA-Z0-9_]+$/.test(str); }
+
+        function loadLocalDict() {
+            const d = localStorage.getItem(KEYS.DICT);
+            const m = localStorage.getItem(KEYS.META);
+            if(d) dictionary = JSON.parse(d);
+            if(m) tableMeta = JSON.parse(m);
+            updateSyncStatus();
+        }
+
+        function updateSyncStatus() {
+            const count = Object.keys(dictionary).length;
+            const status = document.getElementById('syncStatus');
+            const dot = status.querySelector('.status-dot');
+            if(count > 0) {
+                dot.classList.add('online');
+                status.innerHTML = `<span class="status-dot online"></span> 資料庫已就緒 (${count} 表)`;
+            } else {
+                dot.classList.remove('online');
+                status.innerHTML = `<span class="status-dot"></span> 無資料庫`;
+            }
+        }
+
+        // --- PICKER UI ---
+        function openDictModal(target) {
+            if(Object.keys(dictionary).length === 0) { alert('請先設定雲端資料庫'); openSettings(); return; }
+            activeInputId = target;
+            document.getElementById('dictModal').style.display = 'flex';
+            renderTableList();
+            tempSelectedFields = [];
+            updateSelectedCount();
+            document.getElementById('fieldListBody').innerHTML = '';
+            document.getElementById('currentTableName').textContent = '請選擇表格';
+            currentViewingTable = '';
+        }
+        function closeDictModal() { document.getElementById('dictModal').style.display = 'none'; }
+
+        function renderTableList() {
+            const list = document.getElementById('tableList'); list.innerHTML = '';
+            Object.keys(dictionary).sort().forEach(tbl => {
+                const div = document.createElement('div'); div.className = 'table-item';
+                const cnName = tableMeta[tbl] ? tableMeta[tbl] : '';
+                div.innerHTML = `<span class="table-item-code">${tbl}</span><span class="table-item-name">${cnName}</span>`;
+                div.onclick = () => loadFields(tbl, div);
+                list.appendChild(div);
+            });
+        }
+        function filterTables() {
+            const v = document.getElementById('tableSearch').value.toLowerCase();
+            document.querySelectorAll('.table-item').forEach(i => {
+                const text = i.textContent.toLowerCase();
+                i.style.display = text.includes(v) ? 'flex' : 'none';
+            });
+        }
+        function loadFields(tbl, el) {
+            document.querySelectorAll('.table-item').forEach(e => e.classList.remove('active')); el.classList.add('active');
+            currentViewingTable = tbl;
+            const cnName = tableMeta[tbl] ? ` (${tableMeta[tbl]})` : '';
+            document.getElementById('currentTableName').textContent = `${tbl}${cnName}`;
+            const tbody = document.getElementById('fieldListBody'); tbody.innerHTML = '';
+            (dictionary[tbl]||[]).forEach(f => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td><input type="checkbox" class="field-checkbox" value="${f.id}" ${tempSelectedFields.includes(f.id)?'checked':''}></td><td>${f.id}</td><td>${f.name}</td>`;
+                tr.querySelector('input').onchange = (e) => handleCheck(e, f.id);
+                tr.onclick = (e) => { if(e.target.type!=='checkbox') tr.querySelector('input').click(); };
+                tbody.appendChild(tr);
+            });
+        }
+        function handleCheck(e, id) {
+            if(e.target.checked) { if(!tempSelectedFields.includes(id)) tempSelectedFields.push(id); }
+            else { tempSelectedFields = tempSelectedFields.filter(x => x !== id); }
+            updateSelectedCount();
+        }
+        function selectAllFields() {
+            if(!currentViewingTable) return;
+            (dictionary[currentViewingTable]||[]).forEach(f => { if(!tempSelectedFields.includes(f.id)) tempSelectedFields.push(f.id); });
+            refreshCheckboxes(); updateSelectedCount();
+        }
+        function deselectAllFields() {
+            if(!currentViewingTable) return;
+            const ids = (dictionary[currentViewingTable]||[]).map(f => f.id);
+            tempSelectedFields = tempSelectedFields.filter(x => !ids.includes(x));
+            refreshCheckboxes(); updateSelectedCount();
+        }
+        function refreshCheckboxes() {
+            document.querySelectorAll('.field-checkbox').forEach(chk => chk.checked = tempSelectedFields.includes(chk.value));
+        }
+        function updateSelectedCount() { document.getElementById('selectedCount').textContent = tempSelectedFields.length; }
+        function confirmDictSelection() {
+            const input = document.getElementById(activeInputId);
+            const val = input.value.trim();
+            let txt = '';
+            if(activeInputId === 'joinCond') txt = tempSelectedFields.length === 2 ? `${tempSelectedFields[0]} = ${tempSelectedFields[1]}` : tempSelectedFields.join(' ');
+            else if(activeInputId === 'smartWhere') txt = tempSelectedFields.join('\n');
+            else txt = tempSelectedFields.join(', ');
+            
+            if(activeInputId === 'smartWhere') input.value = val ? val + '\n' + txt : txt;
+            else if(activeInputId === 'joinCond') input.value = val ? val + ' AND ' + txt : txt;
+            else input.value = val ? val + ', ' + txt : txt;
+            closeDictModal();
+        }
+
+        // --- SQL LOGIC (FIXED in V15) ---
+        function parseWhere(txt) {
+            if(!txt.trim()) return {sql:'', f:[]};
+            const conds = []; const f = [];
+            txt.split('\n').forEach(l => {
+                if(!l.trim()) return;
+                const p = l.trim().split(/\s+/);
+                f.push(p[0]);
+                if(p.length===1) conds.push(`${p[0]} = '?'`);
+                else if(p.length===2) conds.push(`${p[0]} = '${p[1]}'`);
+                else conds.push(`${p[0]} IN (${p.slice(1).map(v=>`'${v}'`).join(', ')})`);
+            });
+            return {sql: conds.length ? '\nWHERE ' + conds.join('\n  AND ') : '', f};
+        }
+
+        function generateSQL(mode) {
+            const fieldsStr = document.getElementById('fields').value.trim();
+            const prefix = parseInt(document.getElementById('prefixLen').value)||4;
+            const join = document.getElementById('joinCond').value.trim();
+            const order = document.getElementById('orderBy').value.trim();
+            const whereRaw = document.getElementById('smartWhere').value;
+            const recName = document.getElementById('recordName').value.trim();
+
+            if(!fieldsStr) { alert('請輸入欄位'); return; }
+            saveFieldHistory(fieldsStr);
+
+            const sFields = fieldsStr.replace(/[\n\s]+/g, ',').split(',').map(s=>s.trim()).filter(s=>s);
+            const wRes = parseWhere(whereRaw);
+            
+            // V15 FIX: Also scan join conditions for table prefixes
+            const joinFields = join.split(/[^a-zA-Z0-9_]+/).filter(x => x.length > prefix);
+            
+            const allFields = [...sFields, ...wRes.f, ...joinFields];
+            const tables = [...new Set(allFields.filter(f=>f.length>prefix).map(f=>f.substring(0,prefix)+'_t'))];
+
+            if(!tables.length) { document.getElementById('output').textContent='-- 無法識別表格'; return; }
+
+            currentData = { mainTable: tables[0], fields: sFields, joinTables: tables.slice(1), originalJoinCond: join, originalOrderBy: order, parsedWhereClause: wRes.sql };
+
+            let sql = `SELECT\n    ${sFields.join(',\n    ')}\nFROM ${currentData.mainTable}`;
+            currentData.joinTables.forEach(t => sql += `\nLEFT JOIN ${t}\nON ${join || '-- 條件'}`);
+            sql += currentData.parsedWhereClause;
+            if(order) sql += `\nORDER BY ${order}`;
+
+            document.getElementById('output').textContent = sql;
+            saveHistory(recName, fieldsStr, join, order, whereRaw, sql);
+        }
+
+        function transformSQL(mode) {
+            if(!currentData.mainTable) { alert('請先生成 SQL'); return; }
+            if(mode === 'SUM') { openSumModal(); return; }
+            
+            let sql = '';
+            if(mode === 'DISTINCT') {
+                const txt = document.getElementById('output').textContent;
+                sql = txt.includes('DISTINCT') ? txt.replace('DISTINCT ', '') : txt.replace('SELECT', 'SELECT DISTINCT');
+            } else if (mode === 'UPDATE' || mode === 'DELETE') {
+                const pk = currentData.fields[0].split(' ')[0];
+                let where = currentData.parsedWhereClause;
+                if(currentData.joinTables.length) {
+                    let sub = `SELECT ${pk} FROM ${currentData.mainTable}`;
+                    currentData.joinTables.forEach(t => sub += `\n    LEFT JOIN ${t} ON ${currentData.originalJoinCond||'--'}`);
+                    sub += `\n    ${where.replace(/\n/g, '\n    ')}`;
+                    where = `WHERE ${pk} IN (\n    ${sub}\n)`;
+                }
+                if(mode === 'UPDATE') {
+                    const prefix = currentData.mainTable.replace('_t','');
+                    const sets = currentData.fields.filter(f=>f.startsWith(prefix)).map(f=>`${f} = ?`);
+                    sql = sets.length ? `UPDATE ${currentData.mainTable}\nSET\n    ${sets.join(',\n    ')}\n${where}` : '-- 無主表欄位可更新';
+                } else {
+                    sql = `DELETE FROM ${currentData.mainTable}\n${where}`;
+                }
+            }
+            document.getElementById('output').textContent = sql;
+        }
+
+        function openSumModal() {
+            document.getElementById('sumModal').style.display='flex';
+            const div = document.getElementById('sumList'); div.innerHTML='';
+            currentData.fields.forEach(f => div.innerHTML += `<div><input type="checkbox" value="${f}"> ${f}</div>`);
+        }
+        function confirmSum() {
+            const chks = Array.from(document.querySelectorAll('#sumList input'));
+            const sums = chks.filter(c=>c.checked).map(c=>c.value);
+            const grps = chks.filter(c=>!c.checked).map(c=>c.value);
+            if(!sums.length) { alert('選一個欄位'); return; }
+            
+            let sql = `SELECT\n    ${[...grps, ...sums.map(s=>`SUM(${s})`)].join(',\n    ')}\nFROM ${currentData.mainTable}`;
+            currentData.joinTables.forEach(t => sql += `\nLEFT JOIN ${t}\nON ${currentData.originalJoinCond||'--'}`);
+            sql += currentData.parsedWhereClause;
+            if(grps.length) sql += `\nGROUP BY ${grps.join(', ')}`;
+            if(currentData.originalOrderBy) sql += `\nORDER BY ${currentData.originalOrderBy}`;
+            
+            document.getElementById('output').textContent = sql;
+            document.getElementById('sumModal').style.display='none';
+        }
+
+        // --- HISTORY & UTILS ---
+        function saveHistory(name, f, j, o, w, s) {
+            const h = JSON.parse(localStorage.getItem(KEYS.SQL)||'[]');
+            h.unshift({id: Date.now(), name: name||new Date().toLocaleString(), fields:f, join:j, order:o, where:w, sql:s});
+            localStorage.setItem(KEYS.SQL, JSON.stringify(h.slice(0,50)));
+            renderHistory();
+        }
+        function renderHistory() {
+            document.getElementById('historyList').innerHTML = (JSON.parse(localStorage.getItem(KEYS.SQL)||'[]')).map(i => 
+                `<div class="history-item" onclick="loadHistory(${i.id})">
+                    <div class="history-header"><span class="history-name">${i.name}</span><span class="delete-btn" onclick="delHistory(event, ${i.id})">×</span></div>
+                    <div class="history-preview">${i.fields}</div>
+                </div>`
+            ).join('');
+        }
+        function loadHistory(id) {
+            const i = JSON.parse(localStorage.getItem(KEYS.SQL)).find(x=>x.id===id);
+            if(i) {
+                document.getElementById('fields').value=i.fields; document.getElementById('joinCond').value=i.join;
+                document.getElementById('orderBy').value=i.order; document.getElementById('smartWhere').value=i.where;
+                document.getElementById('recordName').value=i.name; document.getElementById('output').textContent=i.sql;
+            }
+        }
+        function delHistory(e, id) { e.stopPropagation(); localStorage.setItem(KEYS.SQL, JSON.stringify(JSON.parse(localStorage.getItem(KEYS.SQL)).filter(x=>x.id!==id))); renderHistory(); }
+        function clearHistory() { localStorage.removeItem(KEYS.SQL); renderHistory(); }
+        function saveFieldHistory(v) { 
+            let a = JSON.parse(localStorage.getItem(KEYS.FIELDS)||'[]'); 
+            a = [v, ...a.filter(x=>x!==v)].slice(0,20);
+            localStorage.setItem(KEYS.FIELDS, JSON.stringify(a));
+            renderFieldSuggestions();
+        }
+        function renderFieldSuggestions() { document.getElementById('field_history').innerHTML = (JSON.parse(localStorage.getItem(KEYS.FIELDS)||'[]')).map(v=>`<option value="${v}">`).join(''); }
+        function clearInputs() {
+            ['fields','joinCond','orderBy','smartWhere','recordName'].forEach(id=>document.getElementById(id).value='');
+            document.getElementById('output').textContent='-- 已清空';
+            currentData = { mainTable:'', fields:[], joinTables:[], originalJoinCond:'', originalOrderBy:'', parsedWhereClause:'' };
+        }
+        function copyToClipboard() { navigator.clipboard.writeText(document.getElementById('output').textContent).then(()=>alert('已複製')); }
+    </script>
+</body>
+</html>
